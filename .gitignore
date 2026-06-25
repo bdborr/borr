@@ -1,0 +1,49 @@
+# dependencies
+node_modules/
+venv/
+.venv/
+
+# Next.js
+.next/
+out/
+
+# production/build
+build/
+dist/
+
+# local env/secrets
+.env
+.env.local
+.env*.local
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Data files - harvested data stays on Turso, not GitHub
+/data/
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Logs & generated files
+*.log
+*.pid
+output.html
+
+# Claude/AI config
+.claude/
