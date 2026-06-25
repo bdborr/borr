@@ -140,21 +140,12 @@ export async function searchLocalPapers(options: SearchPapersOptions): Promise<S
   const where: string[] = ["p.verified = 1"];
 
   if (options.query) {
-    // Sanitize query for FTS5 to prevent syntax errors on hyphens or special chars
-    const ftsQuery = options.query
-      .replace(/"/g, "")
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((word) => {
-        if (word.endsWith("*")) {
-          return `"${word.slice(0, -1)}"*`;
-        }
-        return `"${word}"`;
-      })
-      .join(" ");
-      
-    params.push(ftsQuery);
-    where.push(`papers_fts MATCH ?`);
+    const terms = options.query.split(/\s+/).filter(Boolean);
+    for (const term of terms) {
+      const likeTerm = `%${term}%`;
+      params.push(likeTerm);
+      where.push(`p.search_text LIKE ?`);
+    }
   }
 
   if (options.field) {
@@ -207,51 +198,28 @@ export async function searchLocalPapers(options: SearchPapersOptions): Promise<S
   const offset = (Math.max(options.page, 1) - 1) * limit;
   const fetchLimit = limit + 1;
 
-  let orderBy = "p.citation_count DESC, p.year DESC";
-  let rankColumn = "";
+  let orderBy = "citation_count DESC, year DESC";
 
   if (options.sort === "newest") {
-    orderBy = "p.year DESC, p.id ASC";
+    orderBy = "year DESC, id ASC";
   } else if (options.sort === "relevance" && options.query) {
-    // bm25 returns negative values, more negative = better match
-    // We boost by log of citations
-    rankColumn = `, (
-      bm25(papers_fts, 10.0, 5.0, 1.0) * (1 + ln(1 + MAX(COALESCE(p.citation_count, 0), 0)))
-    ) AS rank`;
-    orderBy = "rank ASC, p.citation_count DESC, p.year DESC"; // ASC because it's negative
+    orderBy = "CASE WHEN title LIKE ? THEN 100 ELSE 0 END + citation_count DESC, year DESC";
+    params.push(`%${options.query}%`);
   }
 
   const selectColumns = `
-    p.id, p.openalex_id, p.title, p.authors, p.abstract, p.doi, p.url, p.journal, p.year,
-    p.institution, p.fields, p.paper_type, p.access_type, p.source, p.verified,
-    p.citation_count, p.created_at
+    id, openalex_id, title, authors, abstract, doi, url, journal, year,
+    institution, fields, paper_type, access_type, source, verified,
+    citation_count, created_at
   `;
 
-  let sql = "";
-  if (options.query) {
-    sql = `
-      SELECT ${selectColumns}${rankColumn}
-      FROM papers_fts
-      JOIN papers p ON p.rowid = papers_fts.rowid
-      WHERE ${whereSql}
-      ORDER BY ${orderBy}
-      LIMIT ? OFFSET ?
-    `;
-  } else {
-    // We must replace 'papers_fts MATCH ?' references if they snuck in
-    // and remove 'p.' prefix if querying direct
-    const directWhereSql = whereSql.replace(/papers_fts MATCH \? AND /g, '').replace(/p\./g, '');
-    const directOrderBy = orderBy.replace(/p\./g, '');
-    const directSelectColumns = selectColumns.replace(/p\./g, '');
-    
-    sql = `
-      SELECT ${directSelectColumns}
-      FROM papers
-      WHERE ${directWhereSql}
-      ORDER BY ${directOrderBy}
-      LIMIT ? OFFSET ?
-    `;
-  }
+  const sql = `
+    SELECT ${selectColumns}
+    FROM papers p
+    WHERE ${whereSql}
+    ORDER BY ${orderBy}
+    LIMIT ? OFFSET ?
+  `;
 
   params.push(fetchLimit, offset);
 

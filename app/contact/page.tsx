@@ -45,7 +45,7 @@ export default function ContactPage() {
               {CONTACT_EMAIL}
             </a>
             <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-              Nehal Hasnain
+              BORR Team
             </p>
           </div>
         </div>
