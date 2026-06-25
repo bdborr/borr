@@ -32,7 +32,7 @@ export default function AboutPage() {
             BORR is an open-source project released under the MIT License. You can view our code, contribute, or report issues on GitHub.
           </p>
           <a
-            href="https://github.com/borr-archive"
+            href="https://github.com/bdborr/borr"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center text-white bg-gray-900 dark:bg-gray-700 hover:bg-gray-800 dark:hover:bg-gray-600 px-6 py-3 rounded-md font-medium transition-colors"

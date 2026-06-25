@@ -16,7 +16,7 @@ export default function Footer() {
             <Link href="/contact" className="hover:text-white transition-colors">Contact</Link>
             <Link href="/terms" className="hover:text-white transition-colors">Terms</Link>
             <Link href="/policy" className="hover:text-white transition-colors">Policy</Link>
-            <a href="https://github.com/borr-archive" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">GitHub</a>
+            <a href="https://github.com/bdborr/borr" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">GitHub</a>
           </div>
         </div>
         

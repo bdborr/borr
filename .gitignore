@@ -47,3 +47,6 @@ output.html
 
 # Claude/AI config
 .claude/
+
+# GitHub workflows (token scope limitation)
+.github/workflows/
