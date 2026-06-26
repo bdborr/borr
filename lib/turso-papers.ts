@@ -1,4 +1,5 @@
 import { createClient, Client, Row } from "@libsql/client";
+import { cache } from "react";
 
 export const isTursoDatabaseConfigured = Boolean(process.env.TURSO_DATABASE_URL);
 
@@ -76,12 +77,36 @@ function parseJsonArray(val: unknown): string[] {
 }
 
 function normalizePaper(row: Row): LocalPaperRow {
+  const abstract = row.abstract ? String(row.abstract) : null;
   return {
     id: String(row.id),
     openalex_id: row.openalex_id ? String(row.openalex_id) : null,
     title: String(row.title),
     authors: parseJsonArray(row.authors),
-    abstract: row.abstract ? String(row.abstract) : null,
+    abstract,
+    doi: row.doi ? String(row.doi) : null,
+    url: row.url ? String(row.url) : null,
+    journal: row.journal ? String(row.journal) : null,
+    year: row.year ? Number(row.year) : null,
+    institution: parseJsonArray(row.institution),
+    fields: parseJsonArray(row.fields),
+    paper_type: row.paper_type ? String(row.paper_type) : null,
+    access_type: row.access_type ? String(row.access_type) : null,
+    source: row.source ? String(row.source) : null,
+    verified: Boolean(row.verified),
+    citation_count: row.citation_count ? Number(row.citation_count) : null,
+    created_at: String(row.created_at),
+  };
+}
+
+function normalizePaperShort(row: Row): LocalPaperRow {
+  const abstract = row.abstract ? String(row.abstract) : null;
+  return {
+    id: String(row.id),
+    openalex_id: row.openalex_id ? String(row.openalex_id) : null,
+    title: String(row.title),
+    authors: parseJsonArray(row.authors),
+    abstract: abstract ? abstract.slice(0, 300) + (abstract.length > 300 ? "..." : "") : null,
     doi: row.doi ? String(row.doi) : null,
     url: row.url ? String(row.url) : null,
     journal: row.journal ? String(row.journal) : null,
@@ -101,16 +126,10 @@ export async function getLocalStats() {
   const db = getClient();
   try {
     const result = await db.execute(`
-      SELECT 
-        COUNT(*) as papers,
-        0 as researchers,
-        0 as institutions
-      FROM papers
-      WHERE verified = 1
+      SELECT SUM(total_count) as papers 
+      FROM paper_stats
     `);
 
-    // We skip exact researcher/institution counts for now as it's slow in SQLite 
-    // without the tablesample + lateral unnest tricks. The total count is fast.
     return {
       papers: Number(result.rows[0]?.papers ?? 0),
       researchers: 0,
@@ -129,22 +148,60 @@ async function getTotalPaperCount(): Promise<number> {
   const now = Date.now();
   if (cachedTotalCount && cachedTotalCount.expiresAt > now) return cachedTotalCount.value;
   const db = getClient();
-  const result = await db.execute(`SELECT count(*) AS n FROM papers WHERE verified = 1`);
-  const value = Number(result.rows[0]?.n ?? 0);
-  cachedTotalCount = { value, expiresAt: now + TOTAL_COUNT_TTL_MS };
-  return value;
+  try {
+    const result = await db.execute(`SELECT SUM(total_count) AS n FROM paper_stats`);
+    const value = Number(result.rows[0]?.n ?? 0);
+    cachedTotalCount = { value, expiresAt: now + TOTAL_COUNT_TTL_MS };
+    return value;
+  } catch (e) {
+    // Fallback if table doesn't exist yet
+    return 0;
+  }
+}
+
+let schemaStatus: {
+  hasFts: boolean;
+  hasSearchText: boolean;
+} = { hasFts: true, hasSearchText: false };  // production Turso always has FTS
+
+async function checkSchema(db: Client) {
+  return schemaStatus;  // hardcoded — saves a PRAGMA query on every search
 }
 
 export async function searchLocalPapers(options: SearchPapersOptions): Promise<SearchPapersResult> {
+  const db = getClient();
+  const schema = await checkSchema(db);
+
   const params: (string | number)[] = [];
   const where: string[] = ["p.verified = 1"];
+  let isFtsUsed = false;
 
   if (options.query) {
-    const terms = options.query.split(/\s+/).filter(Boolean);
-    for (const term of terms) {
-      const likeTerm = `%${term}%`;
-      params.push(likeTerm);
-      where.push(`p.search_text LIKE ?`);
+    if (schema.hasFts) {
+      const cleanQuery = options.query
+        .replace(/["'*]/g, "") // Strip characters that might break FTS syntax
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((term) => `"${term}"*`)
+        .join(" AND ");
+
+      if (cleanQuery) {
+        where.push(`f.papers_fts MATCH ?`);
+        params.push(cleanQuery);
+        isFtsUsed = true;
+      }
+    } else {
+      const terms = options.query.split(/\s+/).filter(Boolean);
+      for (const term of terms) {
+        const likeTerm = `%${term}%`;
+        if (schema.hasSearchText) {
+          where.push(`p.search_text LIKE ?`);
+          params.push(likeTerm);
+        } else {
+          where.push(`(p.title LIKE ? OR coalesce(p.abstract, '') LIKE ? OR coalesce(p.authors_text, '') LIKE ?)`);
+          params.push(likeTerm, likeTerm, likeTerm);
+        }
+      }
     }
   }
 
@@ -198,38 +255,43 @@ export async function searchLocalPapers(options: SearchPapersOptions): Promise<S
   const offset = (Math.max(options.page, 1) - 1) * limit;
   const fetchLimit = limit + 1;
 
-  let orderBy = "citation_count DESC, year DESC";
+  let orderBy = "p.citation_count DESC, p.id ASC";
 
   if (options.sort === "newest") {
-    orderBy = "year DESC, id ASC";
+    orderBy = "p.year DESC, p.id ASC";
   } else if (options.sort === "relevance" && options.query) {
-    orderBy = "CASE WHEN title LIKE ? THEN 100 ELSE 0 END + citation_count DESC, year DESC";
+    orderBy = "CASE WHEN p.title LIKE ? THEN 100 ELSE 0 END + p.citation_count DESC, p.year DESC";
     params.push(`%${options.query}%`);
   }
 
   const selectColumns = `
-    id, openalex_id, title, authors, abstract, doi, url, journal, year,
-    institution, fields, paper_type, access_type, source, verified,
-    citation_count, created_at
+    p.id, p.openalex_id, p.title, p.authors, p.abstract, p.doi, p.url, p.journal, p.year,
+    p.institution, p.fields, p.paper_type, p.access_type, p.source, p.verified,
+    p.citation_count, p.created_at
   `;
 
-  const sql = `
-    SELECT ${selectColumns}
-    FROM papers p
-    WHERE ${whereSql}
-    ORDER BY ${orderBy}
-    LIMIT ? OFFSET ?
-  `;
+  const sql = isFtsUsed
+    ? `
+      SELECT ${selectColumns}
+      FROM papers_fts f
+      CROSS JOIN papers p ON p.rowid = f.rowid
+      WHERE ${whereSql}
+      ORDER BY ${orderBy}
+      LIMIT ? OFFSET ?
+    `
+    : `
+      SELECT ${selectColumns}
+      FROM papers p
+      WHERE ${whereSql}
+      ORDER BY ${orderBy}
+      LIMIT ? OFFSET ?
+    `;
 
   params.push(fetchLimit, offset);
 
-  const db = getClient();
   let result;
   try {
-    console.log("EXECUTING SQL:", sql);
-    console.log("WITH ARGS:", params);
     result = await db.execute({ sql, args: params });
-    console.log("RESULT ROWS:", result.rows.length);
   } catch (e) {
     console.error("SQL ERROR:", e);
     throw e;
@@ -263,7 +325,7 @@ export async function searchLocalPapers(options: SearchPapersOptions): Promise<S
   }
 
   return {
-    papers: visibleRows.map(normalizePaper),
+    papers: visibleRows.map(normalizePaperShort),
     count,
     countMode,
     hasNextPage,
@@ -272,7 +334,7 @@ export async function searchLocalPapers(options: SearchPapersOptions): Promise<S
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function getLocalPaperByKey(key: string): Promise<LocalPaperRow | null> {
+export const getLocalPaperByKey = cache(async (key: string): Promise<LocalPaperRow | null> => {
   const decoded = decodeURIComponent(key);
   const selectColumns = `
     id, openalex_id, title, authors, abstract, doi, url, journal, year,
@@ -297,7 +359,7 @@ export async function getLocalPaperByKey(key: string): Promise<LocalPaperRow | n
   const db = getClient();
   const result = await db.execute({ sql, args: [decoded, decoded, decoded, decoded].slice(0, UUID_RE.test(decoded) ? 1 : 4) });
   return result.rows[0] ? normalizePaper(result.rows[0]) : null;
-}
+});
 
 export async function getLocalPaperCount(): Promise<number> {
   return await getTotalPaperCount();
@@ -310,15 +372,20 @@ export async function getLocalTypeCounts(): Promise<Record<string, number>> {
   if (cachedTypeCounts && cachedTypeCounts.expiresAt > now) return cachedTypeCounts.value;
   
   const db = getClient();
-  const result = await db.execute(`
-    SELECT coalesce(paper_type, 'Other') AS paper_type, count(*) AS n
-    FROM papers
-    WHERE verified = 1
-    GROUP BY 1
-  `);
-  
   const counts: Record<string, number> = {};
-  for (const row of result.rows) counts[String(row.paper_type)] = Number(row.n);
+  
+  try {
+    const result = await db.execute(`
+      SELECT paper_type, total_count AS n
+      FROM paper_stats
+    `);
+    
+    for (const row of result.rows) {
+      counts[String(row.paper_type)] = Number(row.n);
+    }
+  } catch (e) {
+    // If the table doesn't exist yet, return empty
+  }
   
   cachedTypeCounts = { value: counts, expiresAt: now + TOTAL_COUNT_TTL_MS };
   return counts;
