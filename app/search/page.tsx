@@ -4,7 +4,11 @@ import PaperCard from "@/components/PaperCard";
 import MobileFilterToggle from "@/components/MobileFilterToggle";
 import { TOP_FIELDS } from "@/lib/fields";
 
-export const dynamic = "force-dynamic";
+// Rendered per-request (reads searchParams), but NOT force-dynamic: that emitted
+// `no-store` and defeated the CDN cache configured in vercel.json. Without it, the
+// edge caches each search URL (s-maxage=60), so repeat/crawler hits to the same
+// query are served from the CDN instead of re-scanning Turso.
+export const revalidate = 60;
 
 const PAPER_SELECT = "id, title, authors, abstract, doi, url, journal, year, fields, access_type, citation_count, paper_type, verified, created_at";
 
@@ -36,7 +40,7 @@ export default async function SearchPage({
   const filterType = resolvedSearchParams.type || "";
   const filterAccess = resolvedSearchParams.access || "";
   const filterInstitution = resolvedSearchParams.institution || "";
-  const limit = 20;
+  const limit = 15;  // reduced from 20 — faster page loads
   const offset = (page - 1) * limit;
 
   let papers: LocalPaperRow[] | null = [];

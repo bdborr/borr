@@ -342,23 +342,44 @@ export const getLocalPaperByKey = cache(async (key: string): Promise<LocalPaperR
     citation_count, created_at
   `;
 
-  const sql = UUID_RE.test(decoded)
-    ? `SELECT ${selectColumns} FROM papers WHERE verified = 1 AND id = ? LIMIT 1`
-    : `
-      SELECT ${selectColumns}
-      FROM papers
-      WHERE verified = 1
-        AND (
-          lower(coalesce(doi, '')) = lower(?)
-          OR openalex_id = ?
-          OR replace(openalex_id, 'https://openalex.org/', '') = ?
-        )
-      LIMIT 1
-    `;
-
   const db = getClient();
-  const result = await db.execute({ sql, args: [decoded, decoded, decoded, decoded].slice(0, UUID_RE.test(decoded) ? 1 : 4) });
-  return result.rows[0] ? normalizePaper(result.rows[0]) : null;
+
+  // UUID → primary-key lookup.
+  if (UUID_RE.test(decoded)) {
+    const result = await db.execute({
+      sql: `SELECT ${selectColumns} FROM papers WHERE id = ? AND verified = 1 LIMIT 1`,
+      args: [decoded],
+    });
+    return result.rows[0] ? normalizePaper(result.rows[0]) : null;
+  }
+
+  // Otherwise probe each indexed identifier in turn and short-circuit on the
+  // first hit. Each query is an index point-lookup (papers_doi_lower_idx /
+  // openalex_id unique / papers_openalex_short_idx), so it reads ~1 row.
+  // The previous single OR-query filtered on lower(coalesce(doi,'')), which
+  // does NOT match the lower(doi) index expression, so it forced a full table
+  // scan of every row on every /paper/... request — the main read-quota sink.
+  // The `IS NOT NULL` guards let SQLite pick the partial indexes.
+  const lookups: { sql: string; args: string[] }[] = [
+    {
+      sql: `SELECT ${selectColumns} FROM papers WHERE doi IS NOT NULL AND lower(doi) = lower(?) AND verified = 1 LIMIT 1`,
+      args: [decoded],
+    },
+    {
+      sql: `SELECT ${selectColumns} FROM papers WHERE openalex_id = ? AND verified = 1 LIMIT 1`,
+      args: [decoded],
+    },
+    {
+      sql: `SELECT ${selectColumns} FROM papers WHERE openalex_id IS NOT NULL AND replace(openalex_id, 'https://openalex.org/', '') = ? AND verified = 1 LIMIT 1`,
+      args: [decoded],
+    },
+  ];
+
+  for (const lookup of lookups) {
+    const result = await db.execute(lookup);
+    if (result.rows[0]) return normalizePaper(result.rows[0]);
+  }
+  return null;
 });
 
 export async function getLocalPaperCount(): Promise<number> {

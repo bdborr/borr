@@ -9,7 +9,11 @@ import AbstractSection from "@/components/AbstractSection";
 import CiteButton from "@/components/CiteButton";
 import CopyDoiButton from "@/components/CopyDoiButton";
 
-export const dynamic = "force-dynamic";
+// ISR instead of force-dynamic: paper pages are immutable enough to cache for an
+// hour. force-dynamic emitted `no-store` and made every crawler hit re-query Turso;
+// with revalidate the page is served from the Full Route Cache / CDN (matches the
+// s-maxage=3600 header in vercel.json).
+export const revalidate = 3600;
 
 const PAPER_SELECT = "id, title, authors, abstract, doi, url, journal, year, institution, fields, paper_type, access_type, citation_count, verified";
 
