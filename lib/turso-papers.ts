@@ -1,4 +1,5 @@
 import { createClient, Client, Row } from "@libsql/client";
+import { unstable_cache } from "next/cache";
 import { cache } from "react";
 
 export const isTursoDatabaseConfigured = Boolean(process.env.TURSO_DATABASE_URL);
@@ -168,7 +169,7 @@ async function checkSchema(db: Client) {
   return schemaStatus;  // hardcoded — saves a PRAGMA query on every search
 }
 
-export async function searchLocalPapers(options: SearchPapersOptions): Promise<SearchPapersResult> {
+async function searchLocalPapersUncached(options: SearchPapersOptions): Promise<SearchPapersResult> {
   const db = getClient();
   const schema = await checkSchema(db);
 
@@ -332,9 +333,15 @@ export async function searchLocalPapers(options: SearchPapersOptions): Promise<S
   };
 }
 
+export const searchLocalPapers = unstable_cache(
+  searchLocalPapersUncached,
+  ["borr-search-local-papers-v4"],
+  { revalidate: 600 }
+);
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export const getLocalPaperByKey = cache(async (key: string): Promise<LocalPaperRow | null> => {
+async function getLocalPaperByKeyUncached(key: string): Promise<LocalPaperRow | null> {
   const decoded = decodeURIComponent(key);
   const selectColumns = `
     id, openalex_id, title, authors, abstract, doi, url, journal, year,
@@ -380,7 +387,15 @@ export const getLocalPaperByKey = cache(async (key: string): Promise<LocalPaperR
     if (result.rows[0]) return normalizePaper(result.rows[0]);
   }
   return null;
-});
+}
+
+const getLocalPaperByKeyCached = unstable_cache(
+  getLocalPaperByKeyUncached,
+  ["borr-paper-by-key-v3"],
+  { revalidate: 86400 }
+);
+
+export const getLocalPaperByKey = cache(getLocalPaperByKeyCached);
 
 export async function getLocalPaperCount(): Promise<number> {
   return await getTotalPaperCount();

@@ -32,7 +32,8 @@ export default async function SearchPage({
   const query = (resolvedSearchParams.q || "").trim();
   const defaultSort = query ? "relevance" : "cited";
   const sort = resolvedSearchParams.sort || defaultSort;
-  const page = Math.max(parseInt(resolvedSearchParams.page || "1", 10) || 1, 1);
+  const requestedPage = Math.max(parseInt(resolvedSearchParams.page || "1", 10) || 1, 1);
+  const page = Math.min(requestedPage, 20);
   const filterField = resolvedSearchParams.field || "";
   const filterYear = resolvedSearchParams.year || "";
   const filterYearFrom = resolvedSearchParams.yearFrom || "";
@@ -48,8 +49,11 @@ export default async function SearchPage({
   let countMode: "exact" | "estimated" | "lower-bound" = "exact";
   let hasNextPage = false;
   let error: { message: string } | null = null;
+  const hasAnyFilter = Boolean(filterField || filterYear || filterYearFrom || filterYearTo || filterType || filterAccess || filterInstitution);
+  const searchEnabled = process.env.BORR_SEARCH_ENABLED === "1";
+  const canQueryDatabase = searchEnabled && query.length >= 2;
 
-  if (isTursoDatabaseConfigured) {
+  if (isTursoDatabaseConfigured && canQueryDatabase) {
     try {
       const result = await searchLocalPapers({
         query,
@@ -71,7 +75,7 @@ export default async function SearchPage({
     } catch (err) {
       error = { message: err instanceof Error ? err.message : "Turso database query failed" };
     }
-  } else {
+  } else if (!isTursoDatabaseConfigured) {
     error = { message: "No database is configured. Add TURSO_DATABASE_URL to connect to the database." };
   }
 
@@ -233,6 +237,8 @@ export default async function SearchPage({
 
         {error ? (
           <div className="bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300 p-4 rounded-md border border-red-200 dark:border-red-900"><p>Error loading results: {error.message}</p></div>
+        ) : !canQueryDatabase ? (
+          <div className="text-center py-16 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800"><SearchIcon className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600 mb-4" /><h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-1">Search temporarily protected</h3><p className="text-gray-500 dark:text-gray-400">BORR public search is paused while database-read quota recovers. This prevents crawler traffic from consuming more Turso reads. Set BORR_SEARCH_ENABLED=1 in production when you are ready to re-enable it.</p>{(query || hasAnyFilter) && <p className="text-xs text-gray-400 dark:text-gray-500 mt-3">No database query was run for this request.</p>}</div>
         ) : !papers || papers.length === 0 ? (
           <div className="text-center py-16 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800"><SearchIcon className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600 mb-4" /><h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-1">No papers found</h3><p className="text-gray-500 dark:text-gray-400">Try adjusting your search terms or filters.</p></div>
         ) : (
