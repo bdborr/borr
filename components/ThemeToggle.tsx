@@ -9,12 +9,16 @@ function subscribe(callback: () => void) {
   return () => observer.disconnect();
 }
 
+function getSnapshot() {
+  return document.documentElement.classList.contains("dark");
+}
+
+function getServerSnapshot() {
+  return false;
+}
+
 export default function ThemeToggle() {
-  const dark = useSyncExternalStore(
-    subscribe,
-    () => document.documentElement.classList.contains("dark"),
-    () => false
-  );
+  const dark = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   function toggle() {
     const next = !document.documentElement.classList.contains("dark");

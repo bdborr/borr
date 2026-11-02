@@ -1,6 +1,16 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Search } from "lucide-react";
 import { getLocalPaperCount, isTursoDatabaseConfigured } from "@/lib/turso-papers";
+
+export const metadata: Metadata = {
+  title: "BORR — Bangladesh Open Research Repository",
+  description:
+    "The largest open-source repository of over 450,000 research papers by Bangladeshi authors, institutions, and about Bangladesh. Discover papers, authors, and citations.",
+  alternates: {
+    canonical: "/",
+  },
+};
 
 // The monthly harvest updates paper_stats through database triggers. Refresh the
 // homepage hourly so the displayed corpus size follows the database automatically.

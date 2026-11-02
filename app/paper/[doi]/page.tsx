@@ -1,5 +1,6 @@
 import { getLocalPaperByKey, isTursoDatabaseConfigured } from "@/lib/turso-papers";
 import { escapeJsonForHtml, safeExternalUrl } from "@/lib/metadata";
+import { getSiteUrl } from "@/lib/site-url";
 import { ExternalLink, ArrowLeft, Building, Calendar, BookOpen, Database, BarChart3 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -10,19 +11,64 @@ import CiteButton from "@/components/CiteButton";
 import CopyDoiButton from "@/components/CopyDoiButton";
 import type { Metadata } from "next";
 
-// ISR instead of force-dynamic: paper pages are immutable enough to cache for an
+// ISR instead of force-dynamic: paper pages are immutable enough to cache for a
 // day. force-dynamic emitted `no-store` and made every crawler hit re-query Turso;
 // with revalidate the page is served from the Full Route Cache / CDN (matches the
 // s-maxage=86400 header in vercel.json).
 export const revalidate = 86400;
 
-// Deliberately static: generateMetadata previously loaded the same paper a
-// second time. Cache misses and database errors therefore doubled every paper
-// request. The page itself performs the single required indexed lookup.
-export const metadata: Metadata = {
-  title: "Research Paper | BORR",
-  description: "Research paper record in the Bangladesh Open Research Repository.",
-};
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ doi: string }>;
+}): Promise<Metadata> {
+  const resolvedParams = await params;
+  const paper = await loadPaper(resolvedParams.doi);
+
+  if (!paper) {
+    return {
+      title: "Paper Not Found",
+      description: "The requested research paper could not be found in the Bangladesh Open Research Repository.",
+    };
+  }
+
+  const paperTitle = paper.title.trim();
+  const authorsText = paper.authors && paper.authors.length > 0 ? paper.authors.slice(0, 3).join(", ") : null;
+  const yearText = paper.year ? `(${paper.year})` : null;
+  const journalText = paper.journal ? `Published in ${paper.journal}.` : "";
+
+  let description = "";
+  if (paper.abstract) {
+    description = paper.abstract.slice(0, 155).replace(/\s+/g, " ").trim() + "…";
+  } else {
+    description = [authorsText, yearText, journalText, "Discover in the Bangladesh Open Research Repository."]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  const canonicalUrl = `/paper/${encodeURIComponent(resolvedParams.doi)}`;
+
+  return {
+    title: paperTitle,
+    description,
+    alternates: {
+      canonical: canonicalUrl,
+    },
+    openGraph: {
+      title: `${paperTitle} | BORR`,
+      description,
+      url: canonicalUrl,
+      type: "article",
+      publishedTime: paper.year ? `${paper.year}-01-01` : undefined,
+      authors: paper.authors || undefined,
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: `${paperTitle} | BORR`,
+      description,
+    },
+  };
+}
 
 type PaperPageRow = {
   id: string;
@@ -82,16 +128,42 @@ export default async function PaperPage({
   const safeUrl = safeExternalUrl(paper.url, paper.doi);
   const publisherUrl = safeUrl || (paper.doi ? `https://doi.org/${paper.doi}` : null);
   const identifier = paper.doi || paper.openalex_id || paper.id;
+  const siteUrl = getSiteUrl();
+  const canonicalPageUrl = `${siteUrl}/paper/${encodeURIComponent(resolvedParams.doi)}`;
+
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "ScholarlyArticle",
+    "mainEntityOfPage": canonicalPageUrl,
     "headline": paper.title,
-    "abstract": paper.abstract,
-    "author": (paper.authors || []).map((author: string) => ({ "@type": "Person", "name": author })),
-    "datePublished": paper.year?.toString(),
-    "url": safeUrl,
+    "abstract": paper.abstract || undefined,
+    "author": (paper.authors || []).map((author: string) => ({
+      "@type": "Person",
+      "name": author,
+    })),
+    "datePublished": paper.year ? `${paper.year}` : undefined,
+    "url": safeUrl || canonicalPageUrl,
     "identifier": identifier,
-    "publisher": { "@type": "Organization", "name": paper.journal || "Unknown" }
+    "publisher": {
+      "@type": "Organization",
+      "name": paper.journal || "Unknown",
+    },
+    ...(paper.journal
+      ? {
+          "isPartOf": {
+            "@type": "Periodical",
+            "name": paper.journal,
+          },
+        }
+      : {}),
+    ...(paper.fields && paper.fields.length > 0
+      ? {
+          "about": paper.fields.map((f: string) => ({
+            "@type": "Thing",
+            "name": f,
+          })),
+        }
+      : {}),
   };
 
   return (

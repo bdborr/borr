@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { isTursoDatabaseConfigured, searchLocalPapers, type LocalPaperRow } from "@/lib/turso-papers";
 import { Search as SearchIcon, X } from "lucide-react";
 import PaperCard from "@/components/PaperCard";
@@ -16,6 +17,46 @@ const TOP_FIELDS_SET = new Set<string>(TOP_FIELDS);
 
 function cleanParam(value: string | undefined, maxLength: number): string {
   return (value || "").normalize("NFKC").trim().slice(0, maxLength);
+}
+
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; field?: string }>;
+}): Promise<Metadata> {
+  const resolved = await searchParams;
+  const q = cleanParam(resolved.q, 100);
+  const field = cleanParam(resolved.field, 60);
+
+  const title = q
+    ? `"${q}" — Search Results`
+    : field
+    ? `${field} — Research Papers`
+    : "Search Research Papers";
+
+  const description = q
+    ? `Browse Bangladeshi research papers matching "${q}" in the Bangladesh Open Research Repository.`
+    : field
+    ? `Discover scholarly publications and research affiliated with ${field} in Bangladesh.`
+    : "Search over 450,000 research papers by Bangladeshi authors, institutions, or about Bangladesh.";
+
+  return {
+    title,
+    description,
+    alternates: {
+      canonical: "/search",
+    },
+    robots: {
+      index: false,
+      follow: true,
+    },
+    openGraph: {
+      title: `${title} | BORR`,
+      description,
+      url: "/search",
+      type: "website",
+    },
+  };
 }
 
 export default async function SearchPage({

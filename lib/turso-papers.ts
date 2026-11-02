@@ -607,3 +607,25 @@ export async function deleteLocalPaper(id: string): Promise<void> {
     args: [id],
   });
 }
+
+export const getTopPapersForSitemap = unstable_cache(
+  async (limit = 250): Promise<{ id: string; doi: string | null; updated_at: string | null }[]> => {
+    if (!isTursoDatabaseConfigured) return [];
+    try {
+      const db = getClient();
+      const result = await db.execute({
+        sql: `SELECT id, doi, updated_at FROM papers WHERE verified = 1 ORDER BY citation_count DESC LIMIT ?`,
+        args: [limit],
+      });
+      return result.rows.map((r) => ({
+        id: String(r.id),
+        doi: r.doi ? String(r.doi) : null,
+        updated_at: r.updated_at ? String(r.updated_at) : null,
+      }));
+    } catch {
+      return [];
+    }
+  },
+  ["borr-sitemap-papers-v1"],
+  { revalidate: 86400 }
+);

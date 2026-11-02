@@ -2,9 +2,19 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Terms of Use — BORR",
+  title: "Terms of Use",
   description:
-    "BORR is a free metadata index and research-discovery platform. Full-text rights remain with the original publishers, repositories, and authors.",
+    "Terms of Use for the Bangladesh Open Research Repository (BORR). BORR is a free metadata index; copyright and full-text rights remain with original publishers and authors.",
+  alternates: {
+    canonical: "/terms",
+  },
+  openGraph: {
+    title: "Terms of Use — BORR",
+    description:
+      "Terms of Use for the Bangladesh Open Research Repository (BORR). Free metadata index and discovery platform.",
+    url: "/terms",
+    type: "website",
+  },
 };
 
 export default function TermsPage() {

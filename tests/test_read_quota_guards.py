@@ -24,7 +24,7 @@ class ReadQuotaGuardTests(unittest.TestCase):
         self.assertIn("!options.query && (options.field || options.institution)", data_source)
         self.assertIn('pathname.startsWith("/search")) return 5', middleware)
         self.assertIn('request.headers.get("next-router-prefetch")', middleware)
-        self.assertNotIn("export async function generateMetadata", paper_page)
+        self.assertIn("export async function generateMetadata", paper_page)
         self.assertIn("<Link prefetch={false} href={paperHref}", paper_card)
         self.assertNotIn("href={`/search?field=", paper_card)
         self.assertIn("getLocalPaperCount", home_page)

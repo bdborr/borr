@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { getSiteUrl } from "@/lib/site-url";
 
 // Aggressive AI/scraper crawlers: no SEO value, and the likeliest source of the
 // ~700M-row read spike. Block them from the whole site.
@@ -29,20 +30,27 @@ const BLOCKED_BOTS = [
 ];
 
 export default function robots(): MetadataRoute.Robots {
+  const siteUrl = getSiteUrl();
+
   return {
     rules: [
-      // Disallow scrapers entirely.
+      // Disallow abusive AI scrapers entirely.
       { userAgent: BLOCKED_BOTS, disallow: "/" },
-      // Everyone else (Googlebot, Bingbot, humans' feed readers, etc.):
-      // block /search — its faceted filter links are an effectively infinite
-      // URL space and each one is an uncached DB query — but allow the paper
-      // pages, which are the content worth indexing.
+      // Search engines (Googlebot, Bingbot, etc.):
+      // Explicitly allow core content pages and paper records.
+      // Disallow /search and /api/ to prevent crawler loops and unindexed DB queries.
+      {
+        userAgent: ["Googlebot", "Bingbot", "DuckDuckBot", "Applebot"],
+        allow: ["/", "/about", "/contact", "/submit", "/terms", "/policy", "/paper/"],
+        disallow: ["/search", "/api/", "/admin"],
+      },
+      // General crawlers fallback
       {
         userAgent: "*",
-        allow: "/",
+        allow: ["/", "/about", "/contact", "/submit", "/terms", "/policy", "/paper/"],
         disallow: ["/search", "/api/", "/admin"],
-        crawlDelay: 10,
       },
     ],
+    sitemap: `${siteUrl}/sitemap.xml`,
   };
 }

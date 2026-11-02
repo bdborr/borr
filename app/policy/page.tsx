@@ -1,16 +1,65 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CONTACT_EMAIL } from "@/lib/contact";
+import { escapeJsonForHtml } from "@/lib/metadata";
 
 export const metadata: Metadata = {
-  title: "Disclaimer, Takedown & Corrections — BORR",
+  title: "Disclaimer, Takedown & Corrections Policy",
   description:
-    "BORR's metadata disclaimer and the process for correcting metadata, merging duplicates, and handling takedown requests or source complaints.",
+    "BORR's metadata disclaimer and the formal process for correcting metadata, merging duplicate records, and handling copyright takedown requests.",
+  alternates: {
+    canonical: "/policy",
+  },
+  openGraph: {
+    title: "Disclaimer, Takedown & Corrections Policy — BORR",
+    description:
+      "BORR's metadata disclaimer and guidelines for author corrections, duplicate removal, and copyright takedown requests.",
+    url: "/policy",
+    type: "website",
+  },
+};
+
+const policyFaqJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "How do I request a metadata correction for a paper on BORR?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text":
+          "To request a metadata correction (title, author names, affiliations, or year), email bdborr@gmail.com with the paper's DOI and the requested corrections.",
+      },
+    },
+    {
+      "@type": "Question",
+      "name": "How does BORR handle duplicate records?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text":
+          "If a paper is indexed more than once, report the duplicate URLs or DOIs to bdborr@gmail.com, and the maintainers will merge or remove the redundant entry.",
+      },
+    },
+    {
+      "@type": "Question",
+      "name": "What is the procedure for a copyright takedown request on BORR?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text":
+          "Copyright holders or authorized representatives may request removal of bibliographic metadata by emailing bdborr@gmail.com with the record DOI and basis for the request. BORR reviews all requests promptly.",
+      },
+    },
+  ],
 };
 
 export default function PolicyPage() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-12">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: escapeJsonForHtml(policyFaqJsonLd) }}
+      />
       <div className="bg-white dark:bg-gray-900 p-8 md:p-12 rounded-xl shadow-sm border border-gray-200 dark:border-gray-800">
         <h1 className="text-4xl font-extrabold text-borr-navy dark:text-blue-300 mb-2">
           Disclaimer, Takedown &amp; Corrections

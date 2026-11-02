@@ -39,11 +39,11 @@ import requests
 # ─── Configuration ────────────────────────────────────────────────────────
 
 OPENALEX_API = "https://api.openalex.org/works"
-PER_PAGE = 200  # max allowed by OpenAlex
-SLEEP_BETWEEN = 0.15  # courtesy delay between pages
-MAX_RETRIES = 3
-RETRY_DELAY = 30
-REQUEST_TIMEOUT = 60
+PER_PAGE = 100  # 100 per page avoids OpenAlex 504 timeout on deep offsets
+SLEEP_BETWEEN = 0.2  # courtesy delay between pages
+MAX_RETRIES = 5
+RETRY_DELAY = 10
+REQUEST_TIMEOUT = 45
 USER_AGENT = "BORR-Harvester/1.0 (mailto:bdborr@gmail.com)"
 
 # Checkpoint file
@@ -134,95 +134,105 @@ def escape_sql(val: str) -> str:
 def fetch_papers(filter_str: str, since: date, max_pages: int | None = None) -> list[dict]:
     """
     Fetch papers from OpenAlex matching a filter, published on or after `since`.
-    Uses cursor pagination via the `search` endpoint which supports
-    `from_publication_date` and `sort`.
+    Uses cursor pagination if OPENALEX_API_KEY is provided; otherwise uses
+    standard page-based pagination to avoid OpenAlex 401/504 errors on anonymous queries.
     """
     papers: list[dict] = []
-    cursor = "*"
-    page = 0
-
-    # Build URL with sort and date filter
-    # We use the search parameter approach: filter + sort + from_publication_date
-    params = {
-        "filter": filter_str,
-        "sort": "publication_date:desc",
-        "per_page": PER_PAGE,
-        "cursor": cursor,
-    }
-
-    # Add date filter using the newer from_publication_date parameter
-    # (OpenAlex API supports this alongside the filter)
+    page = 1
     since_str = since.isoformat()
-    params["filter"] = f"{filter_str},from_publication_date:{since_str}"
+    filter_with_date = f"{filter_str},from_publication_date:{since_str}"
+
+    api_key = os.environ.get("OPENALEX_API_KEY")
+    headers = {"User-Agent": USER_AGENT}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    use_cursor = bool(api_key)
+    cursor = "*" if use_cursor else None
 
     retries = 0
 
     while True:
-        if max_pages and page >= max_pages:
+        if max_pages and page > max_pages:
             log(f"  Reached max_pages={max_pages}, stopping")
             break
+
+        params: dict = {
+            "filter": filter_with_date,
+            "per_page": PER_PAGE,
+        }
+
+        if use_cursor:
+            params["cursor"] = cursor
+            params["sort"] = "publication_date:desc"
+        else:
+            params["page"] = page
+            # OpenAlex times out with 504 on anonymous requests when sorting by date on large filters.
+            # Filtering by from_publication_date already restricts the set to the target period.
 
         try:
             resp = requests.get(
                 OPENALEX_API,
                 params=params,
-                headers={"User-Agent": USER_AGENT},
+                headers=headers,
                 timeout=REQUEST_TIMEOUT,
             )
-        except requests.RequestException as e:
+
+            if resp.status_code == 429:
+                wait = int(resp.headers.get("Retry-After", 60))
+                log(f"  Rate limited, waiting {wait}s...")
+                time.sleep(wait)
+                continue
+
+            if resp.status_code in (500, 502, 503, 504, 524):
+                retries += 1
+                if retries >= MAX_RETRIES:
+                    log(f"  ERROR: Max retries exceeded on HTTP {resp.status_code}")
+                    raise RuntimeError(f"OpenAlex fetch aborted on page {page} after {MAX_RETRIES} retries with HTTP {resp.status_code}")
+                log(f"  Transient server error (HTTP {resp.status_code}), retrying {retries}/{MAX_RETRIES} in {RETRY_DELAY}s...")
+                time.sleep(RETRY_DELAY)
+                continue
+
+            if resp.status_code != 200:
+                log(f"  ERROR: HTTP {resp.status_code}")
+                log(f"  {resp.text[:300]}")
+                raise RuntimeError(f"OpenAlex fetch aborted on page {page} with HTTP {resp.status_code}")
+
+            data = resp.json()
+        except (requests.RequestException, ValueError) as e:
             retries += 1
             if retries >= MAX_RETRIES:
                 log(f"  ERROR: Max retries exceeded: {e}")
-                break
-            log(f"  RETRY {retries}/{MAX_RETRIES}: {e}")
+                raise RuntimeError(f"OpenAlex fetch failed after {MAX_RETRIES} retries: {e}")
+            log(f"  RETRY {retries}/{MAX_RETRIES} on network/JSON error: {e}")
             time.sleep(RETRY_DELAY)
             continue
 
         retries = 0
-
-        if resp.status_code == 429:
-            wait = int(resp.headers.get("Retry-After", 60))
-            log(f"  Rate limited, waiting {wait}s...")
-            time.sleep(wait)
-            continue
-
-        if resp.status_code != 200:
-            log(f"  ERROR: HTTP {resp.status_code}")
-            log(f"  {resp.text[:300]}")
-            break
-
-        data = resp.json()
         results = data.get("results", [])
 
         if not results:
             log(f"  No more results")
             break
 
-        # Check if results are still within date range
-        earliest_in_page = None
-        for work in results:
-            pub_date = work.get("publication_date")
-            if pub_date:
-                earliest_in_page = pub_date
-            papers.append(work)
+        papers.extend(results)
+
+        total_available = data.get("meta", {}).get("count", 0)
+        count = len(papers)
+        log(f"  Page {page}: {count:,} papers collected (of ~{total_available:,} available)")
+
+        if use_cursor:
+            next_cursor = data.get("meta", {}).get("next_cursor")
+            if not next_cursor:
+                log(f"  No more cursors, done")
+                break
+            cursor = next_cursor
+        else:
+            if len(results) < PER_PAGE or count >= total_available:
+                log(f"  All available results retrieved")
+                break
 
         page += 1
-        count = len(papers)
-        log(f"  Page {page}: {count:,} papers collected "
-            f"(latest: {results[0].get('publication_date', '?') if results else '?'})")
-
-        # Stop if we've gone past the since date
-        if earliest_in_page and earliest_in_page < since_str:
-            log(f"  Past target date ({earliest_in_page} < {since_str}), stopping")
-            break
-
-        # Next cursor
-        next_cursor = data.get("meta", {}).get("next_cursor")
-        if not next_cursor:
-            log(f"  No more cursors, done")
-            break
-
-        params["cursor"] = next_cursor
         time.sleep(SLEEP_BETWEEN)
 
     return papers

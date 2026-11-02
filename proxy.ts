@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const BLOCKED_UA_RE = /(?:GPTBot|ChatGPT-User|OAI-SearchBot|ClaudeBot|Claude-Web|anthropic-ai|CCBot|Bytespider|PerplexityBot|Amazonbot|Applebot-Extended|Google-Extended|cohere-ai|Diffbot|ImagesiftBot|Omgilibot|meta-externalagent|FacebookBot|DataForSeoBot|SemrushBot|AhrefsBot|MJ12bot|DotBot|BLEXBot|PetalBot|YandexBot|Baiduspider|python-requests|curl|wget|Go-http-client|Java\/|HttpClient|Scrapy|HeadlessChrome|bot\b|crawler|spider|scraper)/i;
+const ALLOWED_SEARCH_BOTS_RE = /(?:Googlebot|bingbot|DuckDuckBot|Slurp|Baiduspider|YandexBot|Twitterbot|facebookexternalhit|LinkedInBot|Chrome-Lighthouse|Lighthouse)/i;
+
+// Block aggressive AI scrapers, SEO tool crawlers, and raw script scrapers that waste DB quotas.
+// Legitimate search engines (Googlebot, Bingbot, etc.) and audit tools are explicitly allowed.
+const BLOCKED_UA_RE = /(?:GPTBot|ChatGPT-User|OAI-SearchBot|ClaudeBot|Claude-Web|anthropic-ai|CCBot|Bytespider|PerplexityBot|Amazonbot|Applebot-Extended|Google-Extended|cohere-ai|Diffbot|ImagesiftBot|Omgilibot|meta-externalagent|FacebookBot|DataForSeoBot|SemrushBot|AhrefsBot|MJ12bot|DotBot|BLEXBot|PetalBot|python-requests|curl|wget|Go-http-client|Java\/|HttpClient|Scrapy)/i;
 
 const buckets = new Map<string, { count: number; resetAt: number }>();
 const WINDOW_MS = 60_000;
@@ -13,11 +17,11 @@ function clientIp(request: NextRequest): string {
   );
 }
 
-function limitForPath(pathname: string): number {
+function limitForPath(pathname: string, isSearchBot = false): number {
   // BORR expects only a handful of real users. A low limit keeps even a
   // browser-spoofing crawler far below Turso's free monthly read quota.
   if (pathname.startsWith("/search")) return 5;
-  if (pathname.startsWith("/paper")) return 20;
+  if (pathname.startsWith("/paper")) return isSearchBot ? 120 : 20;
   return 30;
 }
 
@@ -76,8 +80,11 @@ export function proxy(request: NextRequest) {
     });
   }
 
-  // Hard block known AI/scraper/crawler traffic before it can invoke SSR/Turso.
-  if (!ua || BLOCKED_UA_RE.test(ua)) {
+  const isSearchBot = Boolean(ua && ALLOWED_SEARCH_BOTS_RE.test(ua));
+
+  // Hard block known AI/scraper clients before they can invoke SSR/Turso.
+  // Legitimate search bots (Googlebot, Bingbot, etc.) and audit tools pass through.
+  if (!isSearchBot && (!ua || BLOCKED_UA_RE.test(ua))) {
     return plain(403, "BORR blocks automated crawler traffic on database-backed routes.\n");
   }
 
@@ -89,7 +96,7 @@ export function proxy(request: NextRequest) {
 
   const ip = clientIp(request);
   const key = `${ip}:${pathname.startsWith("/paper") ? "/paper" : pathname}`;
-  if (isRateLimited(key, limitForPath(pathname))) {
+  if (!isSearchBot && isRateLimited(key, limitForPath(pathname, isSearchBot))) {
     return plain(429, "Too many requests. Please wait and try again.\n");
   }
 
